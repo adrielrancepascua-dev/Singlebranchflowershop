@@ -1,0 +1,532 @@
+import type { ReactNode } from 'react';
+import type { FlowerStaffExpense } from '../types/flower-expense';
+import type { FlowerOrder } from '../types/flower-order';
+import type {
+  FlowerPrintableInventoryStockReport,
+  FlowerTransferRequest,
+} from '../types/flower-inventory';
+import type { FlowerPrintableSalesReport } from '../types/flower-report';
+import { normalizeFlowerProductColor } from '../utils/flower-product-colors';
+import { normalizeFlowerProductKind } from '../utils/flower-product-kind';
+import {
+  THERMAL_BRAND_NAME,
+  formatThermalBulletLine,
+  formatThermalClaimMode,
+  formatThermalDateLine,
+  formatThermalItemLine,
+  formatThermalDateKey,
+  formatThermalOrderRef,
+  formatThermalTimeLine,
+} from '../utils/flower-thermal-format';
+import { ORDER_STATUS_LABELS, PRICE_FORMATTER } from '../utils/flower-format';
+
+type FlowerThermalPrintRootProps = {
+  id?: string;
+  children: ReactNode;
+};
+
+export function FlowerThermalPrintRoot({ id, children }: FlowerThermalPrintRootProps) {
+  return (
+    <article id={id} className="flower-thermal-print-root">
+      <div className="flower-thermal-print">{children}</div>
+    </article>
+  );
+}
+
+export function FlowerThermalDivider() {
+  return <div className="flower-thermal-divider" aria-hidden="true" />;
+}
+
+export function FlowerThermalSectionTitle({ children }: { children: ReactNode }) {
+  return <p className="flower-thermal-section-title">{children}</p>;
+}
+
+export function FlowerThermalOrderSlip({ order }: { order: FlowerOrder }) {
+  const wrapLines = (order.wrapper_color ?? '')
+    .split(/[,;]+/)
+    .map((part) => formatThermalBulletLine(part))
+    .filter(Boolean);
+
+  const items = order.items ?? [];
+  const scheduleLine = [
+    formatThermalDateLine(order.scheduled_for),
+    formatThermalTimeLine(order.scheduled_for),
+    order.branch_name.toUpperCase(),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  return (
+    <section className="flower-thermal-slip flower-thermal-order-slip">
+      <div className="flower-thermal-order-slip-block">
+        <p className="flower-thermal-brand">{THERMAL_BRAND_NAME.toUpperCase()}</p>
+        <p className="flower-thermal-order-ref">{formatThermalOrderRef(order.id)}</p>
+        <p className="flower-thermal-fulfillment">{formatThermalClaimMode(order.claim_mode)}</p>
+        {scheduleLine ? <p className="flower-thermal-schedule">{scheduleLine}</p> : null}
+        {order.created_at ? (
+          <p className="flower-thermal-line">
+            <span className="flower-thermal-inline-label">INPUT:</span>{' '}
+            {[formatThermalDateLine(order.created_at), formatThermalTimeLine(order.created_at), order.created_by_name]
+              .filter(Boolean)
+              .join(' · ')
+              .toUpperCase()}
+          </p>
+        ) : null}
+      </div>
+
+      <FlowerThermalDivider />
+
+      <div className="flower-thermal-order-slip-block">
+        <p className="flower-thermal-line">
+          <span className="flower-thermal-inline-label">RECEIVER:</span> {order.receiver.toUpperCase()}
+        </p>
+
+        {order.customer_social.trim() ? (
+          <p className="flower-thermal-line">
+            <span className="flower-thermal-inline-label">CUSTOMER:</span>{' '}
+            {order.customer_social.trim().toUpperCase()}
+          </p>
+        ) : null}
+      </div>
+
+      <div className="flower-thermal-order-slip-block">
+        <FlowerThermalSectionTitle>ORDER</FlowerThermalSectionTitle>
+        {items.length > 0 ? (
+          items.map((item) => (
+            <p key={`${order.id}-${item.product_id}-${item.item_name}`} className="flower-thermal-line">
+              {formatThermalItemLine(item.quantity, item.item_name)}
+            </p>
+          ))
+        ) : (
+          <p className="flower-thermal-line">NO FLOWERS LISTED</p>
+        )}
+
+        {wrapLines.length > 0 ? (
+          <>
+            <FlowerThermalSectionTitle>WRAP COLOR</FlowerThermalSectionTitle>
+            {wrapLines.map((line) => (
+              <p key={`${order.id}-${line}`} className="flower-thermal-line">
+                {line}
+              </p>
+            ))}
+          </>
+        ) : null}
+      </div>
+
+      {order.greeting_card.trim() ||
+      order.special_instructions.trim() ||
+      order.notes.trim() ? (
+        <div className="flower-thermal-order-slip-block">
+          {order.greeting_card.trim() ? (
+            <p className="flower-thermal-line flower-thermal-wrap">
+              <span className="flower-thermal-inline-label">GREETING CARD:</span>{' '}
+              {order.greeting_card.trim().toUpperCase()}
+            </p>
+          ) : null}
+
+          {order.special_instructions.trim() ? (
+            <p className="flower-thermal-line flower-thermal-wrap">
+              <span className="flower-thermal-inline-label">SPECIAL INSTRUCTIONS:</span>{' '}
+              {order.special_instructions.trim().toUpperCase()}
+            </p>
+          ) : null}
+
+          {order.notes.trim() ? (
+            <p className="flower-thermal-line flower-thermal-wrap">
+              <span className="flower-thermal-inline-label">NOTES:</span> {order.notes.trim().toUpperCase()}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function FlowerThermalDailyOrdersDocument({
+  id = 'flower-printable-daily-orders',
+  orders,
+}: {
+  id?: string;
+  dayLabel: string;
+  orders: FlowerOrder[];
+}) {
+  if (orders.length === 0) {
+    return null;
+  }
+
+  return (
+    <FlowerThermalPrintRoot id={id}>
+      {orders.map((order) => (
+        <FlowerThermalOrderSlip key={order.id} order={order} />
+      ))}
+    </FlowerThermalPrintRoot>
+  );
+}
+
+export type FlowerThermalExpenseSection = {
+  branch_id: string;
+  branch_name: string;
+  expenses: FlowerStaffExpense[];
+};
+
+export function FlowerThermalExpensesDocument({
+  sections,
+  generatedAt,
+}: {
+  sections: FlowerThermalExpenseSection[];
+  generatedAt?: string;
+}) {
+  const nonEmptySections = sections.filter((section) => section.expenses.length > 0);
+  if (nonEmptySections.length === 0) {
+    return null;
+  }
+
+  const grandTotal = nonEmptySections.reduce(
+    (sum, section) => sum + section.expenses.reduce((sectionSum, expense) => sectionSum + expense.amount, 0),
+    0,
+  );
+  const entryCount = nonEmptySections.reduce((sum, section) => sum + section.expenses.length, 0);
+
+  return (
+    <FlowerThermalPrintRoot id="flower-printable-expenses">
+      {nonEmptySections.map((section) => {
+        const sectionTotal = section.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+        const sortedExpenses = [...section.expenses].sort(
+          (left, right) =>
+            left.expense_date.localeCompare(right.expense_date) ||
+            left.created_at.localeCompare(right.created_at),
+        );
+
+        return (
+          <section key={section.branch_id} className="flower-thermal-slip">
+            <p className="flower-thermal-brand">{THERMAL_BRAND_NAME.toUpperCase()}</p>
+            <FlowerThermalSectionTitle>STAFF EXPENSES</FlowerThermalSectionTitle>
+            <p className="flower-thermal-line">{section.branch_name.toUpperCase()}</p>
+            <p className="flower-thermal-line">{sortedExpenses.length} ENTRIES</p>
+
+            <FlowerThermalDivider />
+
+            {sortedExpenses.map((expense) => (
+              <div key={expense.id} className="flower-thermal-block">
+                <p className="flower-thermal-line flower-thermal-bold">{expense.expense_date}</p>
+                <p className="flower-thermal-line">{expense.description.toUpperCase()}</p>
+                <p className="flower-thermal-line">{expense.staff_name.toUpperCase()}</p>
+                <p className="flower-thermal-line">
+                  {expense.payment_mode === 'gcash' ? 'GCASH' : 'CASH'}
+                </p>
+                <p className="flower-thermal-line">{PRICE_FORMATTER.format(expense.amount)}</p>
+              </div>
+            ))}
+
+            <FlowerThermalDivider />
+            <p className="flower-thermal-line flower-thermal-bold">
+              BRANCH TOTAL: {PRICE_FORMATTER.format(sectionTotal)}
+            </p>
+          </section>
+        );
+      })}
+
+      {nonEmptySections.length > 1 ? (
+        <section className="flower-thermal-slip">
+          <FlowerThermalSectionTitle>ALL BRANCHES</FlowerThermalSectionTitle>
+          <p className="flower-thermal-line">{entryCount} ENTRIES</p>
+          <p className="flower-thermal-line flower-thermal-bold">
+            GRAND TOTAL: {PRICE_FORMATTER.format(grandTotal)}
+          </p>
+          {generatedAt ? <p className="flower-thermal-line">PRINTED {generatedAt}</p> : null}
+        </section>
+      ) : generatedAt ? (
+        <section className="flower-thermal-slip">
+          <p className="flower-thermal-line">PRINTED {generatedAt}</p>
+        </section>
+      ) : null}
+    </FlowerThermalPrintRoot>
+  );
+}
+
+export function FlowerThermalInventoryStockDocument({
+  report,
+}: {
+  report: FlowerPrintableInventoryStockReport;
+}) {
+  return (
+    <FlowerThermalPrintRoot id="flower-printable-inventory-stock">
+      {report.sections.map((section) => (
+        <section key={section.branch_id} className="flower-thermal-slip">
+          <p className="flower-thermal-brand">{THERMAL_BRAND_NAME.toUpperCase()}</p>
+          <FlowerThermalSectionTitle>INVENTORY STOCK</FlowerThermalSectionTitle>
+          <p className="flower-thermal-line">{section.branch_name.toUpperCase()}</p>
+
+          <FlowerThermalDivider />
+
+          {section.rows.map((row, index) => (
+            <p key={`${section.branch_id}-${row.product_name}-${index}`} className="flower-thermal-stock-line">
+              <span>{row.product_name.toUpperCase()}</span>
+              <span>{row.on_hand}</span>
+            </p>
+          ))}
+
+          <FlowerThermalDivider />
+          <p className="flower-thermal-line flower-thermal-bold">
+            TOTAL UNITS: {section.total_units}
+          </p>
+        </section>
+      ))}
+    </FlowerThermalPrintRoot>
+  );
+}
+
+export function FlowerThermalSalesReportDocument({
+  report,
+  showProfitDetails = true,
+}: {
+  report: FlowerPrintableSalesReport;
+  showProfitDetails?: boolean;
+}) {
+  return (
+    <FlowerThermalPrintRoot id="flower-printable-sales-report">
+      <section className="flower-thermal-slip">
+        <p className="flower-thermal-brand">{THERMAL_BRAND_NAME.toUpperCase()}</p>
+        <FlowerThermalSectionTitle>SALES REPORT</FlowerThermalSectionTitle>
+        <p className="flower-thermal-line">{report.period_label.toUpperCase()}</p>
+        <p className="flower-thermal-line">
+          {report.from_date} – {report.to_date}
+        </p>
+
+        <FlowerThermalDivider />
+
+        {report.branches.map((branch) => (
+          <div key={branch.branch_id} className="flower-thermal-block">
+            <p className="flower-thermal-line flower-thermal-bold">{branch.branch_name.toUpperCase()}</p>
+            <p className="flower-thermal-line">ORDERS: {branch.order_count}</p>
+            <p className="flower-thermal-line">SALES: {PRICE_FORMATTER.format(branch.sales_total)}</p>
+            <p className="flower-thermal-line">
+              STAFF EXP: {PRICE_FORMATTER.format(branch.staff_expenses)}
+            </p>
+            {showProfitDetails ? (
+              <>
+                <p className="flower-thermal-line">
+                  SUPPLIER: {PRICE_FORMATTER.format(branch.supplier_costs)}
+                </p>
+                <p className="flower-thermal-line flower-thermal-bold">
+                  NET: {PRICE_FORMATTER.format(branch.net_income)}
+                </p>
+              </>
+            ) : null}
+          </div>
+        ))}
+
+        {report.branches.length > 1 ? (
+          <>
+            <FlowerThermalDivider />
+
+            <p className="flower-thermal-line flower-thermal-bold">ALL BRANCHES</p>
+            <p className="flower-thermal-line">ORDERS: {report.totals.order_count}</p>
+            <p className="flower-thermal-line">SALES: {PRICE_FORMATTER.format(report.totals.sales_total)}</p>
+            <p className="flower-thermal-line">
+              STAFF EXP: {PRICE_FORMATTER.format(report.totals.staff_expenses)}
+            </p>
+            {showProfitDetails ? (
+              <>
+                <p className="flower-thermal-line">
+                  SUPPLIER: {PRICE_FORMATTER.format(report.totals.supplier_costs)}
+                </p>
+                <p className="flower-thermal-line flower-thermal-bold">
+                  NET: {PRICE_FORMATTER.format(report.totals.net_income)}
+                </p>
+              </>
+            ) : null}
+          </>
+        ) : null}
+      </section>
+
+      {report.branches.flatMap((branch) =>
+        branch.orders.map((order) => (
+          <section key={`${branch.branch_id}-${order.order_id}`} className="flower-thermal-slip">
+            <p className="flower-thermal-order-ref">{formatThermalOrderRef(order.order_id)}</p>
+            <p className="flower-thermal-line">{branch.branch_name.toUpperCase()}</p>
+            <p className="flower-thermal-date">{formatThermalDateKey(order.pickup_date)}</p>
+            <p className="flower-thermal-line">{order.receiver.toUpperCase()}</p>
+            <p className="flower-thermal-line">
+              {(ORDER_STATUS_LABELS[order.status] ?? order.status).toUpperCase()}
+            </p>
+            <p className="flower-thermal-line flower-thermal-bold">
+              {PRICE_FORMATTER.format(order.total_amount)}
+            </p>
+          </section>
+        )),
+      )}
+    </FlowerThermalPrintRoot>
+  );
+}
+
+export function FlowerSupplyTransferPrintDocument({
+  transfer,
+}: {
+  transfer: import('../types/flower-supply-transfer').FlowerSupplyTransfer;
+}) {
+  const title =
+    transfer.transfer_type === 'new_arrival'
+      ? 'BRANCH TRANSFER FOR NEW ARRIVALS'
+      : 'BRANCH TRANSFER FOR OLD STOCKS';
+
+  return (
+    <FlowerThermalPrintRoot id="flower-supply-transfer-print">
+      <section className="flower-thermal-slip">
+        <p className="flower-thermal-brand">{THERMAL_BRAND_NAME.toUpperCase()}</p>
+        <p className="flower-thermal-section-title">{title}</p>
+        <p className="flower-thermal-line">{formatThermalDateKey(transfer.created_at.slice(0, 10))}</p>
+
+        <FlowerThermalDivider />
+
+        {transfer.transfer_type === 'new_arrival' ? (
+          <>
+            <p className="flower-thermal-line">
+              ARRIVED AT: {(transfer.arrived_at_branch_name ?? '—').toUpperCase()}
+            </p>
+            <p className="flower-thermal-line">SUPPLIER: {transfer.supplier.toUpperCase()}</p>
+            <p className="flower-thermal-line">
+              AMOUNT PAID (SUPPLIES): {PRICE_FORMATTER.format(transfer.amount_paid_supplies)}
+            </p>
+            <p className="flower-thermal-line">
+              AMOUNT PAID (TRANSPO): {PRICE_FORMATTER.format(transfer.amount_paid_transpo)}
+            </p>
+          </>
+        ) : (
+          <p className="flower-thermal-line">
+            ORIGINAL ARRIVAL:{' '}
+            {transfer.original_arrival_date
+              ? formatThermalDateKey(transfer.original_arrival_date)
+              : '—'}
+          </p>
+        )}
+
+        <FlowerThermalDivider />
+
+        <p className="flower-thermal-line">FROM: {transfer.from_branch_name.toUpperCase()}</p>
+        <p className="flower-thermal-line">PREPARED BY: {transfer.prepared_by.toUpperCase()}</p>
+        <p className="flower-thermal-line">TO: {transfer.to_branch_name.toUpperCase()}</p>
+        <p className="flower-thermal-line">RECEIVED BY: {transfer.received_by.toUpperCase()}</p>
+
+        <FlowerThermalDivider />
+
+        <FlowerThermalSectionTitle>FLOWERS</FlowerThermalSectionTitle>
+        {transfer.items.map((item) => (
+          <p key={item.id} className="flower-thermal-line">
+            {formatThermalItemLine(
+              item.quantity,
+              `${item.product_name} · ${item.product_color}`,
+            )}{' '}
+            ({PRICE_FORMATTER.format(item.line_liability)})
+          </p>
+        ))}
+
+        <FlowerThermalDivider />
+
+        <p className="flower-thermal-line">
+          FLOWER COST: {PRICE_FORMATTER.format(transfer.flower_liability)}
+        </p>
+        <p className="flower-thermal-line flower-thermal-bold">
+          TOTAL LIABILITY: {PRICE_FORMATTER.format(transfer.total_liability)}
+        </p>
+        <p className="flower-thermal-line">REF: {transfer.id.slice(0, 8).toUpperCase()}</p>
+      </section>
+    </FlowerThermalPrintRoot>
+  );
+}
+
+const TRANSFER_PRINT_STATUS_LABELS: Record<FlowerTransferRequest['status'], string> = {
+  pending: 'PENDING',
+  confirmed: 'CONFIRMED',
+  rejected: 'REJECTED',
+  cancelled: 'CANCELLED',
+};
+
+export function FlowerBranchTransferPrintDocument({
+  request,
+}: {
+  request: FlowerTransferRequest;
+}) {
+  const flowerItems = request.items.filter(
+    (item) => normalizeFlowerProductKind(item.product_kind) === 'flower',
+  );
+  const miscItems = request.items.filter(
+    (item) => normalizeFlowerProductKind(item.product_kind) === 'misc',
+  );
+  const totalUnits = request.items.reduce((sum, item) => sum + item.quantity, 0);
+  const dateLine = [formatThermalDateLine(request.created_at), formatThermalTimeLine(request.created_at)]
+    .filter(Boolean)
+    .join(' · ');
+  const note = request.note.trim();
+
+  return (
+    <FlowerThermalPrintRoot id="flower-branch-transfer-print">
+      <section className="flower-thermal-slip">
+        <p className="flower-thermal-brand">{THERMAL_BRAND_NAME.toUpperCase()}</p>
+        <p className="flower-thermal-section-title">BRANCH TRANSFER</p>
+        <p className="flower-thermal-line">PACKING LIST</p>
+        {dateLine ? <p className="flower-thermal-line">{dateLine}</p> : null}
+
+        <FlowerThermalDivider />
+
+        <p className="flower-thermal-line">FROM: {request.from_branch_name.toUpperCase()}</p>
+        <p className="flower-thermal-line">TO: {request.to_branch_name.toUpperCase()}</p>
+        <p className="flower-thermal-line">FILED BY: {request.requested_by_name.toUpperCase()}</p>
+        <p className="flower-thermal-line">
+          STATUS: {TRANSFER_PRINT_STATUS_LABELS[request.status]}
+        </p>
+        {request.resolved_by_name ? (
+          <p className="flower-thermal-line">
+            RESOLVED BY: {request.resolved_by_name.toUpperCase()}
+          </p>
+        ) : null}
+
+        {note ? (
+          <>
+            <FlowerThermalDivider />
+            <p className="flower-thermal-line flower-thermal-wrap">NOTE: {note.toUpperCase()}</p>
+          </>
+        ) : null}
+
+        <FlowerThermalDivider />
+
+        {flowerItems.length > 0 ? (
+          <>
+            <FlowerThermalSectionTitle>FLOWERS</FlowerThermalSectionTitle>
+            {flowerItems.map((item) => (
+              <p key={item.id} className="flower-thermal-line">
+                {formatThermalItemLine(
+                  item.quantity,
+                  `${item.product_name} · ${normalizeFlowerProductColor(item.product_color)}`,
+                )}
+              </p>
+            ))}
+          </>
+        ) : null}
+
+        {miscItems.length > 0 ? (
+          <>
+            <FlowerThermalSectionTitle>OTHER ITEMS</FlowerThermalSectionTitle>
+            {miscItems.map((item) => (
+              <p key={item.id} className="flower-thermal-line">
+                {formatThermalItemLine(item.quantity, item.product_name)}
+              </p>
+            ))}
+          </>
+        ) : null}
+
+        {request.items.length === 0 ? <p className="flower-thermal-line">NO ITEMS LISTED</p> : null}
+
+        <FlowerThermalDivider />
+
+        <p className="flower-thermal-line flower-thermal-bold">TOTAL UNITS: {totalUnits}</p>
+        <p className="flower-thermal-line">REF: {request.id.slice(0, 8).toUpperCase()}</p>
+
+        <FlowerThermalDivider />
+
+        <p className="flower-thermal-line">CHECKED BY: _______________</p>
+        <p className="flower-thermal-line">RECEIVED BY: _______________</p>
+      </section>
+    </FlowerThermalPrintRoot>
+  );
+}

@@ -1,0 +1,916 @@
+import {
+  buildSampleFlowerOrders,
+} from '../../../modules/flowers/shared/data/flowers.mock';
+import type {
+  CreateFlowerOrderInput,
+  FlowerOrder,
+  FlowerOrderStatus,
+  FlowerPaymentMode,
+  ListFlowerOrdersOptions,
+  UpdateFlowerOrderInput,
+} from '../../../modules/flowers/shared/types/flower-order';
+import { FLOWER_ORDER_TERMINAL_STATUSES, getInitialFlowerOrderStatus } from '../../../modules/flowers/shared/types/flower-order';
+import { normalizeFlowerPaymentMode } from '../../../modules/flowers/shared/utils/flower-payment';
+import { buildOrderId } from '../../orders/order-id';
+import {
+  deductFlowerInventoryForOrderLocal,
+  listFlowerBranchesLocal,
+  listFlowerInventoryMovementsLocal,
+  restoreFlowerInventoryForOrderLocal,
+  validateFlowerOrderStockLocal,
+} from '../inventory/flowers-inventory.local';
+import {
+  extraOrderDeductionByProduct,
+  hasCompleteOrderDeduction,
+  HISTORICAL_RECONCILE_BUG_STARTED_AT,
+  INVENTORY_AUTO_DEDUCT_PAUSED,
+  netOrderDeductedByProduct,
+  planOrderInventoryDeduction,
+  quantitiesToRestoreFromHistoricalReconcile,
+} from '../../../modules/flowers/shared/utils/flower-inventory-deduct';
+import {
+  computeFlowerDayCloseStatus,
+  getInventoryDeductionBuckets,
+  getOrdersPendingInventoryDeduction,
+  getPickupDateKey,
+  isInventoryDeductionDue,
+  shouldSkipOpenOrderInventoryRestore,
+} from './flowers-order-day-close';
+import { currentFlowerUserIsAdmin } from '../../../lib/auth/flower-auth.service';
+import { assertOrderContentEditable } from '../../../modules/flowers/shared/utils/flower-order-edit-policy';
+import { assertRequiredDownpayment, computeOrderPaymentFields } from '../../../modules/flowers/shared/utils/flower-order-payment-fields';
+import {
+  formatInventoryHistoricalReconcileUndoNote,
+  formatInventoryOrderEditDeductNote,
+  formatInventoryOrderEditRestoreNote,
+  formatInventoryOverDeductRestoreNote,
+} from '../../../modules/flowers/shared/utils/flower-format';
+import { validateOrderInspoPhotoWithProducts } from './flowers-order-validation';
+import { listFlowerStemsLocal } from '../products/flowers-products.local';
+
+const ORDERS_STORAGE_KEY = 'papers_petals_flower_orders_v2';
+const ORDERS_SEEDED_KEY = 'papers_petals_flower_orders_seeded_v2';
+
+function cloneOrders(orders: FlowerOrder[]): FlowerOrder[] {
+  return orders.map((order) => ({
+    ...order,
+    items: order.items.map((item) => ({ ...item })),
+  }));
+}
+
+function readOrdersFromStorage(): FlowerOrder[] {
+  if (typeof window === 'undefined') {
+    return cloneOrders(buildSampleFlowerOrders());
+  }
+
+  try {
+    const seeded = window.localStorage.getItem(ORDERS_SEEDED_KEY);
+    const raw = window.localStorage.getItem(ORDERS_STORAGE_KEY);
+
+    if (!seeded) {
+      const seed = cloneOrders(buildSampleFlowerOrders());
+      writeOrdersToStorage(seed);
+      window.localStorage.setItem(ORDERS_SEEDED_KEY, 'true');
+      return seed;
+    }
+
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw) as FlowerOrder[];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.map((order) => ({
+      ...order,
+      payment_mode: normalizeFlowerPaymentMode(
+        order.payment_mode,
+        order.branch_id,
+        order.branch_name,
+      ),
+      balance_paid: Boolean(order.balance_paid),
+      balance_payment_mode: order.balance_payment_mode
+        ? normalizeFlowerPaymentMode(
+            order.balance_payment_mode,
+            order.branch_id,
+            order.branch_name,
+          )
+        : '',
+      balance_payment_reference: order.balance_payment_reference ?? '',
+    }));
+  } catch {
+    return cloneOrders(buildSampleFlowerOrders());
+  }
+}
+
+function writeOrdersToStorage(orders: FlowerOrder[]) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(orders));
+  } catch (error) {
+    const isQuotaError =
+      error instanceof DOMException &&
+      (error.name === 'QuotaExceededError' || error.code === 22);
+
+    if (isQuotaError) {
+      throw new Error(
+        'This browser has run out of demo storage space. Delete a few old orders or clear site data for this app, then try again. Production will store photos in cloud storage instead of the browser.',
+      );
+    }
+
+    throw error;
+  }
+}
+
+function getPickupDateKeyFromOrder(iso: string): string {
+  return getPickupDateKey(iso);
+}
+
+async function restoreInventoryIfDeductedLocal(order: FlowerOrder): Promise<void> {
+  if (!order.inventory_deducted) {
+    return;
+  }
+
+  const movements = await listFlowerInventoryMovementsLocal({
+    branchId: order.branch_id,
+    orderId: order.id,
+    limit: 5000,
+  });
+  const netDeducted = netOrderDeductedByProduct(movements, order.id);
+
+  for (const [productId, quantity] of netDeducted) {
+    await restoreFlowerInventoryForOrderLocal({
+      branchId: order.branch_id,
+      productId,
+      quantity,
+      orderId: order.id,
+      receiver: order.receiver,
+    });
+  }
+}
+
+async function deductInventoryForOrderLocal(order: FlowerOrder): Promise<{ wrote: boolean }> {
+  await validateFlowerOrderStockLocal(order.branch_id, order.items);
+
+  const latestMovements = await listFlowerInventoryMovementsLocal({
+    branchId: order.branch_id,
+    orderId: order.id,
+    limit: 5000,
+  });
+  const planned = planOrderInventoryDeduction({
+    orderId: order.id,
+    branchId: order.branch_id,
+    items: order.items,
+    movements: latestMovements,
+  });
+
+  if (planned.length === 0) {
+    return { wrote: false };
+  }
+
+  for (const item of planned) {
+    await deductFlowerInventoryForOrderLocal({
+      branchId: order.branch_id,
+      productId: item.product_id,
+      quantity: item.quantity,
+      orderId: order.id,
+      receiver: order.receiver,
+    });
+  }
+
+  const afterMovements = await listFlowerInventoryMovementsLocal({
+    branchId: order.branch_id,
+    orderId: order.id,
+    limit: 5000,
+  });
+
+  if (
+    !hasCompleteOrderDeduction({
+      orderId: order.id,
+      items: order.items,
+      movements: afterMovements,
+    })
+  ) {
+    throw new Error(`Inventory deduction incomplete for order ${order.id}.`);
+  }
+
+  return { wrote: true };
+}
+
+async function claimAndDeductOrderLocal(order: FlowerOrder): Promise<boolean> {
+  if (INVENTORY_AUTO_DEDUCT_PAUSED) {
+    return false;
+  }
+
+  if (
+    order.status === 'cancelled' ||
+    order.inventory_deducted ||
+    !FLOWER_ORDER_TERMINAL_STATUSES.includes(order.status)
+  ) {
+    return false;
+  }
+
+  const freshOrders = readOrdersFromStorage();
+  const index = freshOrders.findIndex((entry) => entry.id === order.id);
+
+  if (index === -1 || freshOrders[index].inventory_deducted) {
+    return false;
+  }
+
+  // Heal stale false flags: movements already cover the order — set claim, do not re-deduct.
+  const existingMovements = await listFlowerInventoryMovementsLocal({
+    branchId: order.branch_id,
+    orderId: order.id,
+    limit: 5000,
+  });
+  if (
+    hasCompleteOrderDeduction({
+      orderId: order.id,
+      items: order.items,
+      movements: existingMovements,
+    }) &&
+    netOrderDeductedByProduct(existingMovements, order.id).size > 0
+  ) {
+    freshOrders[index] = {
+      ...freshOrders[index],
+      inventory_deducted: true,
+    };
+    writeOrdersToStorage(freshOrders);
+    return false;
+  }
+
+  freshOrders[index] = {
+    ...freshOrders[index],
+    inventory_deducted: true,
+  };
+  writeOrdersToStorage(freshOrders);
+
+  let wrote = false;
+  try {
+    const result = await deductInventoryForOrderLocal(order);
+    wrote = result.wrote;
+    return true;
+  } catch (error) {
+    if (!wrote) {
+      const afterFailMovements = await listFlowerInventoryMovementsLocal({
+        branchId: order.branch_id,
+        orderId: order.id,
+        limit: 5000,
+      });
+      const alreadyDeducted = netOrderDeductedByProduct(afterFailMovements, order.id);
+      if (alreadyDeducted.size === 0) {
+        const rollbackOrders = readOrdersFromStorage();
+        const rollbackIndex = rollbackOrders.findIndex((entry) => entry.id === order.id);
+        if (rollbackIndex !== -1) {
+          rollbackOrders[rollbackIndex] = {
+            ...rollbackOrders[rollbackIndex],
+            inventory_deducted: false,
+          };
+          writeOrdersToStorage(rollbackOrders);
+        }
+      }
+    }
+    console.warn('Inventory deduction failed for order.', { orderId: order.id, error });
+    return false;
+  }
+}
+
+async function maybeBatchDeductInventoryForClosedDay(
+  dateKey: string,
+  branchId: string,
+  options?: { skipTimeGate?: boolean },
+): Promise<void> {
+  if (INVENTORY_AUTO_DEDUCT_PAUSED) {
+    return;
+  }
+
+  const orders = readOrdersFromStorage();
+  const dayOrders = orders.filter(
+    (order) => getPickupDateKey(order.scheduled_for) === dateKey,
+  );
+
+  if (!options?.skipTimeGate && !isInventoryDeductionDue(dateKey)) {
+    return;
+  }
+
+  const pending = getOrdersPendingInventoryDeduction(dayOrders, dateKey, branchId);
+
+  for (const order of pending) {
+    await claimAndDeductOrderLocal(order);
+  }
+}
+
+export async function listFlowerOrdersLocal(
+  options: ListFlowerOrdersOptions = {},
+): Promise<FlowerOrder[]> {
+  const orders = readOrdersFromStorage();
+
+  const filtered = orders.filter((order) => {
+    if (options.branchId && order.branch_id !== options.branchId) {
+      return false;
+    }
+
+    if (options.scheduledFrom && getPickupDateKeyFromOrder(order.scheduled_for) < options.scheduledFrom) {
+      return false;
+    }
+
+    if (options.scheduledTo && getPickupDateKeyFromOrder(order.scheduled_for) > options.scheduledTo) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return filtered.sort(
+    (a, b) => new Date(b.scheduled_for).getTime() - new Date(a.scheduled_for).getTime(),
+  );
+}
+
+export async function getFlowerOrderLocal(orderId: string): Promise<FlowerOrder | null> {
+  const orders = readOrdersFromStorage();
+  return orders.find((order) => order.id === orderId) ?? null;
+}
+
+function buildOrderFromInput(
+  input: CreateFlowerOrderInput,
+  branchName: string,
+  existing?: FlowerOrder,
+): FlowerOrder {
+  assertRequiredDownpayment(input.total_amount, input.downpayment);
+  if (!input.proof_dp_data_url?.trim()) {
+    throw new Error('Proof of DP is required.');
+  }
+
+  const payment = computeOrderPaymentFields(input.total_amount, input.downpayment, {
+    balance_paid: existing?.balance_paid,
+    balance_payment_mode: existing?.balance_payment_mode,
+    balance_payment_reference: existing?.balance_payment_reference,
+  });
+
+  return {
+    id: existing?.id ?? buildOrderId().replace('ORD-', 'PP-'),
+    branch_id: input.branch_id,
+    branch_name: branchName,
+    receiver: input.receiver.trim(),
+    customer_social: input.customer_social.trim(),
+    scheduled_for: input.scheduled_for,
+    status: existing?.status ?? getInitialFlowerOrderStatus(
+      input.claim_mode,
+      input.total_amount,
+      input.downpayment,
+      input.scheduled_for,
+    ),
+    claim_mode: input.claim_mode,
+    wrapper_color: input.wrapper_color.trim(),
+    greeting_card: input.greeting_card.trim(),
+    special_instructions: input.special_instructions.trim(),
+    downpayment: payment.downpayment,
+    payment_mode: normalizeFlowerPaymentMode(input.payment_mode, input.branch_id, branchName),
+    payment_reference: input.payment_reference.trim(),
+    total_amount: payment.total_amount,
+    balance: payment.balance,
+    balance_paid: payment.balance_paid,
+    balance_payment_mode: payment.balance_payment_mode,
+    balance_payment_reference: payment.balance_payment_reference,
+    notes: input.notes.trim(),
+    photo_inspo_data_url: input.photo_inspo_data_url,
+    proof_dp_data_url: input.proof_dp_data_url,
+    proof_balance_data_url: existing?.proof_balance_data_url ?? '',
+    order_form_ss_data_url: input.order_form_ss_data_url,
+    ready_photo_data_url: input.ready_photo_data_url ?? existing?.ready_photo_data_url ?? '',
+    created_at: existing?.created_at ?? new Date().toISOString(),
+    created_by_id: input.created_by_id,
+    created_by_name: input.created_by_name,
+    inventory_deducted: existing?.inventory_deducted ?? false,
+    content_edited_at: existing?.content_edited_at ?? null,
+    items: input.items.map((item) => ({ ...item })),
+  };
+}
+
+export async function createFlowerOrderLocal(input: CreateFlowerOrderInput): Promise<FlowerOrder> {
+  const branches = await listFlowerBranchesLocal();
+  const branch = branches.find((entry) => entry.id === input.branch_id);
+
+  if (!branch) {
+    throw new Error('Branch not found.');
+  }
+
+  const products = await listFlowerStemsLocal();
+  validateOrderInspoPhotoWithProducts(input.items, input.photo_inspo_data_url, products, input.claim_mode);
+  await validateFlowerOrderStockLocal(input.branch_id, input.items);
+
+  const created = buildOrderFromInput(input, branch.name);
+  const orders = readOrdersFromStorage();
+  writeOrdersToStorage([created, ...orders]);
+
+  await claimAndDeductOrderLocal(created);
+  return readOrdersFromStorage().find((entry) => entry.id === created.id) ?? created;
+}
+
+export async function updateFlowerOrderLocal(input: UpdateFlowerOrderInput): Promise<FlowerOrder> {
+  const orders = readOrdersFromStorage();
+  const index = orders.findIndex((order) => order.id === input.id);
+
+  if (index === -1) {
+    throw new Error('Order not found.');
+  }
+
+  const existing = orders[index];
+  const branches = await listFlowerBranchesLocal();
+  const branch = branches.find((entry) => entry.id === input.branch_id);
+
+  if (!branch) {
+    throw new Error('Branch not found.');
+  }
+
+  const products = await listFlowerStemsLocal();
+  validateOrderInspoPhotoWithProducts(input.items, input.photo_inspo_data_url, products, input.claim_mode);
+
+  const adminUnlimitedEdits = currentFlowerUserIsAdmin();
+  assertOrderContentEditable(existing, Date.now(), { adminUnlimitedEdits });
+
+  const updated = buildOrderFromInput(input, branch.name, existing);
+  if (!adminUnlimitedEdits && !existing.content_edited_at) {
+    updated.content_edited_at = new Date().toISOString();
+  }
+
+  const creditByProductId =
+    existing.inventory_deducted && existing.branch_id === input.branch_id
+      ? buildCreditFromOrderItems(existing.items)
+      : {};
+
+  await validateFlowerOrderStockLocal(input.branch_id, updated.items, creditByProductId);
+
+  if (existing.inventory_deducted) {
+    const orderId = existing.id;
+    const nextReceiver = updated.receiver;
+    const editRestoreNote = formatInventoryOrderEditRestoreNote(orderId, nextReceiver);
+    const editDeductNote = formatInventoryOrderEditDeductNote(orderId, nextReceiver);
+    const movements = await listFlowerInventoryMovementsLocal({
+      branchId: existing.branch_id,
+      orderId,
+      limit: 5000,
+    });
+    const previousQtyMap = netOrderDeductedByProduct(movements, orderId);
+    const previousQty = Object.fromEntries(previousQtyMap);
+
+    if (existing.branch_id !== updated.branch_id) {
+      for (const [productId, quantity] of previousQtyMap) {
+        await restoreFlowerInventoryForOrderLocal({
+          branchId: existing.branch_id,
+          productId,
+          quantity,
+          orderId,
+          receiver: existing.receiver,
+          note: editRestoreNote,
+        });
+      }
+
+      for (const item of updated.items) {
+        if (item.quantity <= 0) {
+          continue;
+        }
+        await deductFlowerInventoryForOrderLocal({
+          branchId: updated.branch_id,
+          productId: item.product_id,
+          quantity: item.quantity,
+          orderId,
+          receiver: nextReceiver,
+          note: editDeductNote,
+        });
+      }
+    } else {
+      const nextQty = buildCreditFromOrderItems(updated.items);
+      const productIds = new Set([...Object.keys(previousQty), ...Object.keys(nextQty)]);
+
+      for (const productId of productIds) {
+        const delta = (nextQty[productId] ?? 0) - (previousQty[productId] ?? 0);
+        if (delta > 0) {
+          await deductFlowerInventoryForOrderLocal({
+            branchId: updated.branch_id,
+            productId,
+            quantity: delta,
+            orderId,
+            receiver: nextReceiver,
+            note: editDeductNote,
+          });
+        } else if (delta < 0) {
+          await restoreFlowerInventoryForOrderLocal({
+            branchId: updated.branch_id,
+            productId,
+            quantity: Math.abs(delta),
+            orderId,
+            receiver: nextReceiver,
+            note: editRestoreNote,
+          });
+        }
+      }
+    }
+  }
+
+  orders[index] = updated;
+  writeOrdersToStorage(orders);
+
+  return updated;
+}
+
+function buildCreditFromOrderItems(
+  items: Array<{ product_id: string; quantity: number }>,
+): Record<string, number> {
+  const credit: Record<string, number> = {};
+
+  for (const item of items) {
+    credit[item.product_id] = (credit[item.product_id] ?? 0) + item.quantity;
+  }
+
+  return credit;
+}
+
+export async function updateFlowerOrderReadyPhotoLocal(
+  orderId: string,
+  readyPhotoDataUrl: string,
+): Promise<FlowerOrder> {
+  const orders = readOrdersFromStorage();
+  const index = orders.findIndex((order) => order.id === orderId);
+
+  if (index === -1) {
+    throw new Error('Order not found.');
+  }
+
+  if (!readyPhotoDataUrl) {
+    throw new Error('Finished order photo is required.');
+  }
+
+  const updated: FlowerOrder = {
+    ...orders[index],
+    ready_photo_data_url: readyPhotoDataUrl,
+    items: orders[index].items.map((item) => ({ ...item })),
+  };
+
+  orders[index] = updated;
+  writeOrdersToStorage(orders);
+
+  return updated;
+}
+
+export async function deleteFlowerOrderLocal(orderId: string): Promise<void> {
+  const orders = readOrdersFromStorage();
+  const index = orders.findIndex((order) => order.id === orderId);
+
+  if (index === -1) {
+    throw new Error('Order not found.');
+  }
+
+  const existing = orders[index];
+
+  if (existing.inventory_deducted) {
+    await restoreInventoryIfDeductedLocal(existing);
+  }
+
+  orders.splice(index, 1);
+  writeOrdersToStorage(orders);
+}
+
+export async function updateFlowerOrderStatusLocal(
+  orderId: string,
+  status: FlowerOrderStatus,
+): Promise<FlowerOrder> {
+  const orders = readOrdersFromStorage();
+  const index = orders.findIndex((order) => order.id === orderId);
+
+  if (index === -1) {
+    throw new Error('Order not found.');
+  }
+
+  const current = orders[index];
+
+  if (
+    FLOWER_ORDER_TERMINAL_STATUSES.includes(status) &&
+    current.balance > 0 &&
+    !current.balance_paid
+  ) {
+    throw new Error('Mark the remaining balance as paid before completing this order.');
+  }
+
+  if (status === 'cancelled' && current.inventory_deducted) {
+    await restoreInventoryIfDeductedLocal(current);
+    const afterRestore = readOrdersFromStorage();
+    const restoreIndex = afterRestore.findIndex((entry) => entry.id === orderId);
+    if (restoreIndex === -1) {
+      throw new Error('Order not found.');
+    }
+    afterRestore[restoreIndex] = {
+      ...afterRestore[restoreIndex],
+      status: 'cancelled',
+      inventory_deducted: false,
+      items: afterRestore[restoreIndex].items.map((item) => ({ ...item })),
+    };
+    writeOrdersToStorage(afterRestore);
+  } else {
+    const ordersAfter = readOrdersFromStorage();
+    const nextIndex = ordersAfter.findIndex((entry) => entry.id === orderId);
+    if (nextIndex === -1) {
+      throw new Error('Order not found.');
+    }
+    ordersAfter[nextIndex] = {
+      ...ordersAfter[nextIndex],
+      status,
+      items: ordersAfter[nextIndex].items.map((item) => ({ ...item })),
+    };
+    writeOrdersToStorage(ordersAfter);
+  }
+
+  const forDeduct = readOrdersFromStorage().find((entry) => entry.id === orderId);
+  if (forDeduct) {
+    await claimAndDeductOrderLocal(forDeduct);
+  }
+
+  await maybeBatchDeductInventoryForClosedDay(
+    getPickupDateKeyFromOrder(current.scheduled_for),
+    current.branch_id,
+  );
+
+  const refreshed = readOrdersFromStorage().find((entry) => entry.id === orderId);
+  if (!refreshed) {
+    throw new Error('Order not found.');
+  }
+  return refreshed;
+}
+
+export async function markFlowerOrderBalancePaidLocal(
+  orderId: string,
+  balancePaymentMode: FlowerPaymentMode,
+  balancePaymentReference = '',
+  proofBalanceDataUrl = '',
+): Promise<FlowerOrder> {
+  const orders = readOrdersFromStorage();
+  const index = orders.findIndex((order) => order.id === orderId);
+
+  if (index === -1) {
+    throw new Error('Order not found.');
+  }
+
+  const current = orders[index];
+  const isCorrection = current.balance_paid;
+  if (!isCorrection && (current.balance <= 0 || current.balance_paid)) {
+    throw new Error('This order has no remaining balance to collect.');
+  }
+
+  if (!balancePaymentMode) {
+    throw new Error('Please choose a balance payment mode.');
+  }
+
+  const normalizedMode = normalizeFlowerPaymentMode(
+    balancePaymentMode,
+    current.branch_id,
+    current.branch_name,
+  );
+
+  if (normalizedMode !== 'cash' && !balancePaymentReference.trim()) {
+    throw new Error('Reference # is required for non-cash balance payments.');
+  }
+
+  const trimmedReference =
+    normalizedMode === 'cash' ? '' : balancePaymentReference.trim();
+
+  const resolvedProof = proofBalanceDataUrl.trim() || current.proof_balance_data_url.trim();
+  if (!resolvedProof) {
+    throw new Error('Proof of balance payment is required.');
+  }
+
+  const updated: FlowerOrder = {
+    ...current,
+    ...(isCorrection
+      ? {}
+      : {
+          balance: 0,
+          balance_paid: true,
+        }),
+    balance_payment_mode: normalizedMode,
+    balance_payment_reference: trimmedReference,
+    proof_balance_data_url: resolvedProof,
+    items: current.items.map((item) => ({ ...item })),
+  };
+
+  orders[index] = updated;
+  writeOrdersToStorage(orders);
+  return updated;
+}
+
+export async function getFlowerDayCloseStatusLocal(
+  dateKey: string,
+  branchId?: string,
+): Promise<{
+  date: string;
+  total_orders: number;
+  open_orders: number;
+  is_closed: boolean;
+}> {
+  const orders = readOrdersFromStorage();
+  return computeFlowerDayCloseStatus(orders, dateKey, branchId);
+}
+
+export async function restoreHistoricalReconcileDeductionsLocal(): Promise<{
+  restoredUnits: number;
+  productCount: number;
+}> {
+  const movements = await listFlowerInventoryMovementsLocal({
+    fromDate: HISTORICAL_RECONCILE_BUG_STARTED_AT.slice(0, 10),
+    limit: 100000,
+  });
+  const toRestore = quantitiesToRestoreFromHistoricalReconcile(movements);
+  for (const line of toRestore) {
+    await restoreFlowerInventoryForOrderLocal({
+      branchId: line.branchId,
+      productId: line.productId,
+      quantity: line.quantity,
+      orderId: line.orderId,
+      receiver: line.receiver,
+      note: formatInventoryHistoricalReconcileUndoNote(line.orderId, line.receiver),
+    });
+  }
+
+  return {
+    restoredUnits: toRestore.reduce((sum, line) => sum + line.quantity, 0),
+    productCount: toRestore.length,
+  };
+}
+
+/**
+ * Undo PR #25 sweeping Not started / Ready drafts that were wrongly deducted.
+ * Manual / emergency only — not wired into the 60s poll or force deduct
+ * (auto-running it voids just-finished order_deducts as STOCK IN).
+ * Re-reads each order before restoring so a mid-loop finish+deduct is not voided.
+ */
+export async function restoreWronglyDeductedOpenOrdersLocal(): Promise<{
+  restoredOrders: number;
+  restoredUnits: number;
+}> {
+  const orders = readOrdersFromStorage();
+  let restoredOrders = 0;
+  let restoredUnits = 0;
+
+  for (const order of orders) {
+    if (shouldSkipOpenOrderInventoryRestore(order.status)) {
+      continue;
+    }
+
+    const live = readOrdersFromStorage().find((entry) => entry.id === order.id);
+    if (!live || shouldSkipOpenOrderInventoryRestore(live.status)) {
+      continue;
+    }
+
+    const movements = await listFlowerInventoryMovementsLocal({
+      branchId: live.branch_id,
+      orderId: live.id,
+      limit: 5000,
+    });
+    const netDeducted = netOrderDeductedByProduct(movements, live.id);
+    const units = [...netDeducted.values()].reduce((sum, quantity) => sum + quantity, 0);
+
+    if (units <= 0 && !live.inventory_deducted) {
+      continue;
+    }
+
+    const stillOpen = readOrdersFromStorage().find((entry) => entry.id === live.id);
+    if (!stillOpen || shouldSkipOpenOrderInventoryRestore(stillOpen.status)) {
+      continue;
+    }
+
+    for (const [productId, quantity] of netDeducted) {
+      await restoreFlowerInventoryForOrderLocal({
+        branchId: stillOpen.branch_id,
+        productId,
+        quantity,
+        orderId: stillOpen.id,
+        receiver: stillOpen.receiver,
+      });
+    }
+
+    const fresh = readOrdersFromStorage();
+    const index = fresh.findIndex((entry) => entry.id === stillOpen.id);
+    if (index === -1 || shouldSkipOpenOrderInventoryRestore(fresh[index].status)) {
+      continue;
+    }
+
+    fresh[index] = {
+      ...fresh[index],
+      inventory_deducted: false,
+      items: fresh[index].items.map((item) => ({ ...item })),
+    };
+    writeOrdersToStorage(fresh);
+
+    if (units > 0) {
+      restoredOrders += 1;
+      restoredUnits += units;
+    }
+  }
+
+  return { restoredOrders, restoredUnits };
+}
+
+/**
+ * Finished orders deducted 2×/3×: put back only surplus stems; keep inventory_deducted true.
+ * Not wired into due/force polls — all-time ledger extras can massively inflate stock.
+ */
+export async function restoreOverDeductedOrderInventoryLocal(): Promise<{
+  restoredOrders: number;
+  restoredUnits: number;
+}> {
+  const orders = readOrdersFromStorage();
+  let restoredOrders = 0;
+  let restoredUnits = 0;
+
+  for (const order of orders) {
+    if (!FLOWER_ORDER_TERMINAL_STATUSES.includes(order.status)) {
+      continue;
+    }
+
+    const movements = await listFlowerInventoryMovementsLocal({
+      branchId: order.branch_id,
+      orderId: order.id,
+      limit: 5000,
+    });
+    const extras = extraOrderDeductionByProduct({
+      orderId: order.id,
+      items: order.items,
+      movements,
+    });
+    const units = [...extras.values()].reduce((sum, quantity) => sum + quantity, 0);
+    if (units <= 0) {
+      continue;
+    }
+
+    const note = formatInventoryOverDeductRestoreNote(order.id, order.receiver);
+    for (const [productId, quantity] of extras) {
+      await restoreFlowerInventoryForOrderLocal({
+        branchId: order.branch_id,
+        productId,
+        quantity,
+        orderId: order.id,
+        receiver: order.receiver,
+        note,
+      });
+    }
+
+    restoredOrders += 1;
+    restoredUnits += units;
+  }
+
+  return { restoredOrders, restoredUnits };
+}
+
+export async function runDueInventoryDeductionsLocal(): Promise<number> {
+  // Open-order restore is intentionally NOT run here — see supabase twin.
+
+  if (INVENTORY_AUTO_DEDUCT_PAUSED) {
+    return 0;
+  }
+
+  const orders = readOrdersFromStorage();
+  const buckets = getInventoryDeductionBuckets(orders);
+  let deducted = 0;
+
+  for (const { dateKey, branchId } of buckets) {
+    try {
+      const before = getOrdersPendingInventoryDeduction(orders, dateKey, branchId).length;
+      await maybeBatchDeductInventoryForClosedDay(dateKey, branchId);
+      const afterOrders = readOrdersFromStorage();
+      const after = getOrdersPendingInventoryDeduction(afterOrders, dateKey, branchId).length;
+      deducted += Math.max(0, before - after);
+    } catch (error) {
+      console.warn('Scheduled inventory deduction failed.', { dateKey, branchId, error });
+    }
+  }
+
+  return deducted;
+}
+
+export async function forceRunInventoryDeductionsLocal(): Promise<number> {
+  // Same as runDue: do not auto-run open-order restore (deduct→STOCK IN race).
+
+  if (INVENTORY_AUTO_DEDUCT_PAUSED) {
+    return 0;
+  }
+
+  const orders = readOrdersFromStorage();
+  const buckets = getInventoryDeductionBuckets(orders, Date.now(), { skipTimeGate: true });
+  let deducted = 0;
+
+  for (const { dateKey, branchId } of buckets) {
+    const before = getOrdersPendingInventoryDeduction(orders, dateKey, branchId).length;
+    try {
+      await maybeBatchDeductInventoryForClosedDay(dateKey, branchId, { skipTimeGate: true });
+      deducted += before;
+    } catch (error) {
+      console.warn('Force inventory deduction failed.', { dateKey, branchId, error });
+    }
+  }
+
+  return deducted;
+}

@@ -1,0 +1,245 @@
+import type { FlowerInventoryStockRow } from '../types/flower-inventory';
+import { miscCategoryFromFlowerType } from './flower-misc-category';
+import { normalizeFlowerProductKind } from './flower-product-kind';
+
+export const FLOWER_PRODUCT_COLOR_UNCategorized = 'Uncategorized';
+
+/** Common stem colors — pick one per product or add a custom color. */
+export const FLOWER_PRODUCT_COLOR_OPTIONS = [
+  'Red',
+  'Pink',
+  'White',
+  'Yellow',
+  'Orange',
+  'Peach',
+  'Lavender',
+  'Purple',
+  'Blue',
+  'Green',
+  'Cream',
+  'Brown',
+  'Mixed',
+  'Other',
+] as const;
+
+export type FlowerProductColorOption = (typeof FLOWER_PRODUCT_COLOR_OPTIONS)[number];
+
+const COLOR_SORT_ORDER = [...FLOWER_PRODUCT_COLOR_OPTIONS, FLOWER_PRODUCT_COLOR_UNCategorized];
+
+export function normalizeFlowerProductColor(value: string | null | undefined): string {
+  const trimmed = (value ?? '').trim();
+  return trimmed || FLOWER_PRODUCT_COLOR_UNCategorized;
+}
+
+export function isPresetFlowerProductColor(value: string): boolean {
+  return (FLOWER_PRODUCT_COLOR_OPTIONS as readonly string[]).includes(value);
+}
+
+export function buildFlowerProductColorOptions(existingColors: string[] = []): string[] {
+  const merged = new Set<string>([...FLOWER_PRODUCT_COLOR_OPTIONS]);
+
+  for (const color of existingColors) {
+    const normalized = normalizeFlowerProductColor(color);
+    if (normalized !== FLOWER_PRODUCT_COLOR_UNCategorized) {
+      merged.add(normalized);
+    }
+  }
+
+  const preset = FLOWER_PRODUCT_COLOR_OPTIONS.filter((color) => merged.has(color));
+  const custom = [...merged]
+    .filter((color) => !isPresetFlowerProductColor(color))
+    .sort((left, right) => left.localeCompare(right));
+
+  return [...preset, ...custom];
+}
+
+export function compareFlowerProductColorLabels(left: string, right: string): number {
+  const leftIndex = COLOR_SORT_ORDER.indexOf(left as FlowerProductColorOption);
+  const rightIndex = COLOR_SORT_ORDER.indexOf(right as FlowerProductColorOption);
+  const safeLeft = leftIndex === -1 ? COLOR_SORT_ORDER.length : leftIndex;
+  const safeRight = rightIndex === -1 ? COLOR_SORT_ORDER.length : rightIndex;
+
+  if (safeLeft !== safeRight) {
+    return safeLeft - safeRight;
+  }
+
+  return left.localeCompare(right);
+}
+
+export function deriveFlowerTypeFromProduct(name: string, color: string): string {
+  const trimmedName = name.trim();
+  const normalizedColor = normalizeFlowerProductColor(color);
+
+  if (normalizedColor !== FLOWER_PRODUCT_COLOR_UNCategorized) {
+    const colorPrefix = `${normalizedColor} `;
+    if (trimmedName.toLowerCase().startsWith(colorPrefix.toLowerCase())) {
+      const withoutColor = trimmedName.slice(colorPrefix.length).trim();
+      if (withoutColor) {
+        return withoutColor;
+      }
+    }
+  }
+
+  return trimmedName;
+}
+
+export function compareFlowerTypeLabels(left: string, right: string): number {
+  return left.localeCompare(right);
+}
+
+export function compareInventoryStockRows(left: FlowerInventoryStockRow, right: FlowerInventoryStockRow): number {
+  if (left.branch_name !== right.branch_name) {
+    return left.branch_name.localeCompare(right.branch_name);
+  }
+
+  const leftKind = normalizeFlowerProductKind(left.product_kind);
+  const rightKind = normalizeFlowerProductKind(right.product_kind);
+
+  if (leftKind !== rightKind) {
+    return leftKind.localeCompare(rightKind);
+  }
+
+  if (leftKind === 'misc') {
+    const categoryCompare = miscCategoryFromFlowerType(left.product_flower_type).localeCompare(
+      miscCategoryFromFlowerType(right.product_flower_type),
+    );
+
+    if (categoryCompare !== 0) {
+      return categoryCompare;
+    }
+
+    return left.product_name.localeCompare(right.product_name);
+  }
+
+  const typeCompare = compareFlowerTypeLabels(
+    deriveFlowerTypeFromProduct(left.product_name, left.product_color),
+    deriveFlowerTypeFromProduct(right.product_name, right.product_color),
+  );
+
+  if (typeCompare !== 0) {
+    return typeCompare;
+  }
+
+  const colorCompare = compareFlowerProductColorLabels(
+    normalizeFlowerProductColor(left.product_color),
+    normalizeFlowerProductColor(right.product_color),
+  );
+
+  if (colorCompare !== 0) {
+    return colorCompare;
+  }
+
+  return left.product_name.localeCompare(right.product_name);
+}
+
+export function compareFlowerProducts(
+  left: { name: string; color: string },
+  right: { name: string; color: string },
+): number {
+  return compareInventoryStockRows(
+    {
+      product_id: left.name,
+      product_name: left.name,
+      product_color: left.color,
+      product_kind: 'flower',
+      product_flower_type: '',
+      branch_id: '',
+      branch_name: '',
+      on_hand: 0,
+      last_updated: null,
+      product_is_active: true,
+    },
+    {
+      product_id: right.name,
+      product_name: right.name,
+      product_color: right.color,
+      product_kind: 'flower',
+      product_flower_type: '',
+      branch_id: '',
+      branch_name: '',
+      on_hand: 0,
+      last_updated: null,
+      product_is_active: true,
+    },
+  );
+}
+
+export function groupInventoryStockByFlowerType(rows: FlowerInventoryStockRow[]): Array<{
+  flowerType: string;
+  rows: FlowerInventoryStockRow[];
+}> {
+  const buckets = new Map<string, FlowerInventoryStockRow[]>();
+
+  for (const row of rows) {
+    if (normalizeFlowerProductKind(row.product_kind) !== 'flower') {
+      continue;
+    }
+
+    const flowerType = deriveFlowerTypeFromProduct(row.product_name, row.product_color);
+    const bucket = buckets.get(flowerType) ?? [];
+    bucket.push(row);
+    buckets.set(flowerType, bucket);
+  }
+
+  return [...buckets.entries()]
+    .sort(([left], [right]) => compareFlowerTypeLabels(left, right))
+    .map(([flowerType, typeRows]) => ({
+      flowerType,
+      rows: [...typeRows].sort(compareInventoryStockRows),
+    }));
+}
+
+export function groupInventoryStockMisc(rows: FlowerInventoryStockRow[]): FlowerInventoryStockRow[] {
+  return [...rows]
+    .filter((row) => normalizeFlowerProductKind(row.product_kind) === 'misc')
+    .sort((left, right) => left.product_name.localeCompare(right.product_name));
+}
+
+/** Human-readable label for inventory rows (includes color for flower variants). */
+export function formatInventoryStockLabel(row: FlowerInventoryStockRow): string {
+  if (normalizeFlowerProductKind(row.product_kind) !== 'flower') {
+    return row.product_name;
+  }
+
+  const flowerType = deriveFlowerTypeFromProduct(row.product_name, row.product_color);
+  const color = normalizeFlowerProductColor(row.product_color);
+
+  if (color === FLOWER_PRODUCT_COLOR_UNCategorized) {
+    return flowerType;
+  }
+
+  return `${flowerType} · ${color}`;
+}
+
+export function flowerProductColorSwatchClass(color: string): string {
+  switch (normalizeFlowerProductColor(color)) {
+    case 'Red':
+      return 'bg-red-500';
+    case 'Pink':
+      return 'bg-pink-400';
+    case 'White':
+      return 'bg-white border border-brand-muted/60';
+    case 'Yellow':
+      return 'bg-yellow-400';
+    case 'Orange':
+      return 'bg-orange-400';
+    case 'Peach':
+      return 'bg-orange-200';
+    case 'Lavender':
+      return 'bg-violet-300';
+    case 'Purple':
+      return 'bg-purple-500';
+    case 'Blue':
+      return 'bg-blue-500';
+    case 'Green':
+      return 'bg-emerald-500';
+    case 'Cream':
+      return 'bg-amber-100 border border-brand-muted/50';
+    case 'Brown':
+      return 'bg-amber-800';
+    case 'Mixed':
+      return 'bg-gradient-to-br from-pink-400 via-yellow-300 to-purple-400';
+    default:
+      return 'bg-brand-muted/50';
+  }
+}
