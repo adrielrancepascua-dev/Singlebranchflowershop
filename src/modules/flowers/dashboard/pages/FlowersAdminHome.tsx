@@ -10,7 +10,7 @@ import { SINGLE_BRANCH_NAME } from '../../shared/data/flowers.mock';
 import FlowerPageHeader from '../../shared/components/FlowerPageHeader';
 import FlowerStatCard from '../../shared/components/FlowerStatCard';
 import {
-  PRICE_FORMATTER,
+  formatPesoAmount,
   scheduledForToDateKey,
   toManilaDateKeyFromDate,
 } from '../../shared/utils/flower-format';
@@ -117,7 +117,7 @@ export default function FlowersAdminHome() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <FlowerStatCard
           label="Today’s sales"
-          value={loading ? '…' : PRICE_FORMATTER.format(todaySales)}
+          value={loading ? '…' : formatPesoAmount(todaySales)}
           icon={BarChart3}
           accent="green"
         />

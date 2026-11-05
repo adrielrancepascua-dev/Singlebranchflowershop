@@ -465,6 +465,17 @@ export const PRICE_FORMATTER = new Intl.NumberFormat('en-PH', {
   maximumFractionDigits: 2,
 });
 
+/** Whole pesos when there are no centavos, so dashboard tiles stay readable. */
+export function formatPesoAmount(amount: number): string {
+  const hasCentavos = Math.round(Math.abs(amount) * 100) % 100 !== 0;
+  return new Intl.NumberFormat('en-PH', {
+    style: 'currency',
+    currency: 'PHP',
+    minimumFractionDigits: hasCentavos ? 2 : 0,
+    maximumFractionDigits: hasCentavos ? 2 : 0,
+  }).format(amount);
+}
+
 export function summarizeFlowerLines(
   items: Array<{ item_name: string; quantity: number }>,
   limit?: number,

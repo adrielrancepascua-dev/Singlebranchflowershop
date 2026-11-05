@@ -20,9 +20,9 @@ export default function FlowerStatCard({
   accent = 'default',
 }: FlowerStatCardProps) {
   return (
-    <div className="flower-card flex items-center gap-3 p-4 sm:gap-4 sm:p-5">
+    <div className="flower-card flex min-w-0 flex-col gap-2.5 p-3.5 sm:flex-row sm:items-center sm:gap-4 sm:p-5">
       <div
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl sm:h-11 sm:w-11 ${ACCENT_STYLES[accent]}`}
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:h-11 sm:w-11 ${ACCENT_STYLES[accent]}`}
       >
         <Icon className="h-5 w-5" strokeWidth={1.75} />
       </div>
@@ -30,7 +30,7 @@ export default function FlowerStatCard({
         <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-brand-accent sm:text-xs">
           {label}
         </p>
-        <p className="mt-0.5 truncate font-serif text-xl font-semibold text-brand-dark sm:text-2xl">
+        <p className="mt-0.5 font-serif text-[1.35rem] font-semibold leading-none tracking-tight text-brand-dark sm:text-2xl">
           {value}
         </p>
       </div>
