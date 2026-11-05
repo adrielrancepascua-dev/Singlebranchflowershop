@@ -1,7 +1,7 @@
 import type { FlowerClaimMode } from '../types/flower-order';
 import { parseFlowerTimestamp } from './flower-format';
 
-export const THERMAL_BRAND_NAME = 'Papers & Petals';
+export const THERMAL_BRAND_NAME = 'Flowershop';
 
 export function formatThermalOrderRef(orderId: string): string {
   const normalized = orderId.replace(/^order[-_]?/i, '').toUpperCase();

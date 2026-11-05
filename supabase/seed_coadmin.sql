@@ -1,8 +1,8 @@
--- Papers & Petals — co-admin account (coadmin@papersandpetals.ph)
+-- Flowershop — co-admin account (coadmin@flowershop.ph)
 -- Run AFTER add_co_admin_role.sql
 --
 -- Step 1 — Supabase Dashboard → Authentication → Users → Add user
---   Email: coadmin@papersandpetals.ph
+--   Email: coadmin@flowershop.ph
 --   Password: 1234
 --   Auto-confirm email: ON
 --
@@ -19,8 +19,8 @@ insert into public.flower_profiles (
 )
 values (
   '<AUTH_USER_UUID>',
-  'coadmin@papersandpetals.ph',
-  'Papers & Petals Co-admin',
+  'coadmin@flowershop.ph',
+  'Flowershop Co-admin',
   'co_admin',
   null,
   false,

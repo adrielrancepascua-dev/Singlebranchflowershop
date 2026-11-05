@@ -382,7 +382,7 @@ export async function listFlowerInventoryMovementsSupabase(
     if (options.orderId) {
       const pattern = inventoryMovementNoteLikePatternForOrderId(options.orderId);
       if (pattern) {
-        // Exact "Order <id> ·…" prefix — avoids PP-1 matching PP-12 via leading %ilike.
+        // Exact "Order <id> ·…" prefix — avoids FS-1 matching FS-12 via leading %ilike.
         query = query.like('note', pattern);
       }
     }

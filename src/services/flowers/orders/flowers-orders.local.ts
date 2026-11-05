@@ -353,7 +353,7 @@ function buildOrderFromInput(
   });
 
   return {
-    id: existing?.id ?? buildOrderId().replace('ORD-', 'PP-'),
+    id: existing?.id ?? buildOrderId().replace('ORD-', 'FS-'),
     branch_id: input.branch_id,
     branch_name: branchName,
     receiver: input.receiver.trim(),

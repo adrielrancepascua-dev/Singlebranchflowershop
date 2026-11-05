@@ -1,4 +1,4 @@
-export const PAPERS_AND_PETALS_LOGO_SRC = '/papers-and-petals-logo.png';
+export const FLOWERSHOP_LOGO_SRC = '/flowershop-logo.svg';
 
 type FlowerBrandLogoProps = {
   size?: 'sm' | 'md' | 'lg';
@@ -22,14 +22,14 @@ export default function FlowerBrandLogo({
   return (
     <div className={`flex min-w-0 items-center gap-3 ${className}`}>
       <img
-        src={PAPERS_AND_PETALS_LOGO_SRC}
-        alt="Papers and Petals"
+        src={FLOWERSHOP_LOGO_SRC}
+        alt="Flowershop"
         className={`${sizeClasses[size]} shrink-0 rounded-xl object-cover shadow-sm`}
       />
       {showWordmark ? (
         <div className="min-w-0">
           <p className="truncate font-serif text-base font-semibold leading-tight text-brand-dark sm:text-lg">
-            Papers &amp; Petals
+            Flowershop
           </p>
           {subtitle ? (
             <p className="truncate text-[10px] font-semibold uppercase tracking-[0.16em] text-brand-accent">

@@ -50,7 +50,7 @@ export interface ListFlowerInventoryMovementsOptions extends ListFlowerInventory
   fromDate?: string;
   toDate?: string;
   productId?: string;
-  /** Match movements whose note references this order id (Order PP-…). */
+  /** Match movements whose note references this order id (Order FS-…). */
   orderId?: string;
 }
 

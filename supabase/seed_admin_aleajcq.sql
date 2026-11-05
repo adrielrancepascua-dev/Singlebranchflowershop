@@ -1,4 +1,4 @@
--- Papers & Petals — owner admin account (aleajcq@gmail.com)
+-- Flowershop — owner admin account (aleajcq@gmail.com)
 -- Run AFTER schema_flowers_v2.sql and add_staff_management.sql
 --
 -- Step 1 — Supabase Dashboard → Authentication → Users → Add user
@@ -20,7 +20,7 @@ insert into public.flower_profiles (
 values (
   '<AUTH_USER_UUID>',
   'aleajcq@gmail.com',
-  'Papers & Petals Owner',
+  'Flowershop Owner',
   'admin',
   null,
   false,

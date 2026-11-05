@@ -16,7 +16,7 @@ declare
   v_email text;
   v_id uuid;
   v_attempt integer;
-  v_domain text := 'papersandpetals.ph';
+  v_domain text := 'flowershop.ph';
 begin
   if auth.uid() is null then
     raise exception 'You must be signed in as admin.'

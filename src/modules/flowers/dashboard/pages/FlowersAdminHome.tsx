@@ -103,7 +103,7 @@ export default function FlowersAdminHome() {
   return (
     <div className="animate-fade-in">
       <FlowerPageHeader
-        label="Papers & Petals"
+        label="Flowershop"
         title={`${SINGLE_BRANCH_NAME} shop`}
         description={`Signed in as ${user?.display_name ?? 'Shop Admin'}, ${formatFlowerRoleLabel(user?.role ?? 'admin')}. One counter, one cooler, one set of books.`}
       />

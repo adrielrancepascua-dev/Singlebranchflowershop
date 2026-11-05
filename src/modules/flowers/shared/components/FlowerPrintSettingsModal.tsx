@@ -187,14 +187,14 @@ export default function FlowerPrintSettingsModal({ open, onClose }: FlowerPrintS
                 }}
               >
                 <p style={{ fontWeight: 700, fontSize: `calc(${couponPreview ? 20 : 18}pt * ${previewScale})` }}>
-                  PAPERS &amp; PETALS
+                  FLOWERSHOP
                 </p>
                 <p style={{ fontWeight: 700, fontSize: `calc(${couponPreview ? 16 : 16}pt * ${previewScale})` }}>
                   311-7814
                 </p>
                 <p style={{ fontSize: `calc(${couponPreview ? 15 : 15}pt * ${previewScale})` }}>STORE PICK UP</p>
                 <p style={{ fontSize: `calc(${couponPreview ? 14 : 14}pt * ${previewScale})`, marginTop: '0.35rem' }}>
-                  JULY 10 · 10:00am · URDANETA
+                  JULY 10 · 10:00am · DAGUPAN
                 </p>
                 <p style={{ fontSize: `calc(${couponPreview ? 13.5 : 14}pt * ${previewScale})`, marginTop: '0.5rem' }}>
                   RECEIVER: SAMPLE

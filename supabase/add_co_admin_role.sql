@@ -1,6 +1,6 @@
 -- Co-admin role: same back-office access as admin.
 -- App UI hides COGS + Net sales for co_admin only.
--- Run in Supabase SQL editor before creating coadmin@papersandpetals.ph
+-- Run in Supabase SQL editor before creating coadmin@flowershop.ph
 
 alter table public.flower_profiles
   drop constraint if exists flower_profiles_role_check;

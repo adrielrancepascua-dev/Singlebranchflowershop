@@ -1,4 +1,4 @@
--- Quick production sanity check for Papers & Petals.
+-- Quick production sanity check for Flowershop.
 -- Run in Supabase SQL editor. All checks should return at least one row where noted.
 
 -- 1) Atomic stock RPC exists and is callable by authenticated users

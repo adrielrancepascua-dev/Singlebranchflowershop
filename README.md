@@ -1,8 +1,8 @@
-# Papers & Petals — Dagupan
+# Flowershop
 
 Single-shop back office for a flower shop. It opens in **admin mode** with sample products, stock, orders, and sales already loaded in the browser.
 
-Brought over from the multi-branch Papers & Petals back office, keeping the parts a one-location shop actually uses:
+The screens a one-location shop uses:
 
 - **Home** — today’s sales, open orders, and low stem counts
 - **Orders** — calendar and list for walk-ins, pickups, and deliveries

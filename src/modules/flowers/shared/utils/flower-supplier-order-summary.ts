@@ -355,7 +355,7 @@ export function buildSupplierOrderClipboardText(input: {
 }): string {
   const { summary, orderQuantities } = input;
   const lines: string[] = [
-    'PAPERS & PETALS — SUPPLIER ORDER',
+    'FLOWERSHOP — SUPPLIER ORDER',
     formatSupplierSummaryDateRange(summary.dateFrom, summary.dateTo),
   ];
 

@@ -135,7 +135,7 @@ export default function FlowerTeamPage() {
       return;
     }
 
-    const text = `Papers & Petals login\nEmail: ${createdStaff.email}\nTemporary password: ${createdStaff.temporary_password}\n\nFirst login: choose branch and set a new password.`;
+    const text = `Flowershop login\nEmail: ${createdStaff.email}\nTemporary password: ${createdStaff.temporary_password}\n\nFirst login: choose branch and set a new password.`;
     await navigator.clipboard.writeText(text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 2000);

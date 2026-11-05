@@ -1,4 +1,4 @@
--- Papers & Petals — Flowers v2 schema (Supabase)
+-- Flowershop — Flowers v2 schema (Supabase)
 -- Run in Supabase SQL editor when connecting production auth/storage.
 
 create table if not exists public.flower_profiles (

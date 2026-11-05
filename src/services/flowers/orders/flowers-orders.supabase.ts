@@ -177,7 +177,7 @@ async function validateOrderInspoPhotoSupabase(
 }
 
 function buildOrderId(): string {
-  return `PP-${Date.now()}-${Math.floor(Math.random() * 10000)
+  return `FS-${Date.now()}-${Math.floor(Math.random() * 10000)
     .toString()
     .padStart(4, '0')}`;
 }

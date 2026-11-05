@@ -1630,7 +1630,7 @@ export default function FlowerOrderFormModal({
               {existingOrder ? (isViewMode ? 'View order' : 'Edit order') : 'New order'}
             </p>
             <h2 className="font-serif text-lg font-semibold text-brand-dark">
-              Papers &amp; Petals — Daily Order
+              Flowershop — Daily Order
             </h2>
             {existingOrder ? (
               <p className="mt-1 text-xs text-brand-brown/70">

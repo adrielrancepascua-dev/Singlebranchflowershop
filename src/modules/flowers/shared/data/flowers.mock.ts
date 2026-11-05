@@ -81,7 +81,7 @@ export const FLOWER_DEMO_USERS: Array<
 > = [
   {
     id: 'user-admin',
-    email: 'admin@papersandpetals.ph',
+    email: 'admin@flowershop.ph',
     display_name: 'Shop Admin',
     role: 'admin',
     branch_id: SINGLE_BRANCH_ID,
@@ -101,7 +101,7 @@ export function buildSampleFlowerOrders(): FlowerOrder[] {
 
   return [
     sampleOrder({
-      id: 'PP-2401',
+      id: 'FS-2401',
       branch_id: SINGLE_BRANCH_ID,
       branch_name: SINGLE_BRANCH_NAME,
       receiver: 'Maria Santos',
@@ -138,7 +138,7 @@ export function buildSampleFlowerOrders(): FlowerOrder[] {
       ],
     }),
     sampleOrder({
-      id: 'PP-2402',
+      id: 'FS-2402',
       branch_id: SINGLE_BRANCH_ID,
       branch_name: SINGLE_BRANCH_NAME,
       receiver: 'Ana Cruz',
@@ -174,7 +174,7 @@ export function buildSampleFlowerOrders(): FlowerOrder[] {
       ],
     }),
     sampleOrder({
-      id: 'PP-2403',
+      id: 'FS-2403',
       branch_id: SINGLE_BRANCH_ID,
       branch_name: SINGLE_BRANCH_NAME,
       receiver: 'Jose Ramos',
@@ -210,7 +210,7 @@ export function buildSampleFlowerOrders(): FlowerOrder[] {
       ],
     }),
     sampleOrder({
-      id: 'PP-2404',
+      id: 'FS-2404',
       branch_id: SINGLE_BRANCH_ID,
       branch_name: SINGLE_BRANCH_NAME,
       receiver: 'Elena Bautista',
@@ -247,7 +247,7 @@ export function buildSampleFlowerOrders(): FlowerOrder[] {
       ],
     }),
     sampleOrder({
-      id: 'PP-2398',
+      id: 'FS-2398',
       branch_id: SINGLE_BRANCH_ID,
       branch_name: SINGLE_BRANCH_NAME,
       receiver: 'Liza Gomez',
@@ -283,7 +283,7 @@ export function buildSampleFlowerOrders(): FlowerOrder[] {
       ],
     }),
     sampleOrder({
-      id: 'PP-2394',
+      id: 'FS-2394',
       branch_id: SINGLE_BRANCH_ID,
       branch_name: SINGLE_BRANCH_NAME,
       receiver: 'Carlo Dela Cruz',
@@ -319,7 +319,7 @@ export function buildSampleFlowerOrders(): FlowerOrder[] {
       ],
     }),
     sampleOrder({
-      id: 'PP-2388',
+      id: 'FS-2388',
       branch_id: SINGLE_BRANCH_ID,
       branch_name: SINGLE_BRANCH_NAME,
       receiver: 'Wedding — Reyes',
@@ -355,7 +355,7 @@ export function buildSampleFlowerOrders(): FlowerOrder[] {
       ],
     }),
     sampleOrder({
-      id: 'PP-2405',
+      id: 'FS-2405',
       branch_id: SINGLE_BRANCH_ID,
       branch_name: SINGLE_BRANCH_NAME,
       receiver: 'Nica Flores',
@@ -408,7 +408,7 @@ export function buildSampleInventoryMovements(): FlowerInventoryMovementRow[] {
       quantity: 12,
       previous_on_hand: 98,
       new_on_hand: 86,
-      note: 'Order PP-2401 · Maria Santos · day-close deduct',
+      note: 'Order FS-2401 · Maria Santos · day-close deduct',
       created_at: manilaIso(0, 9, 25),
       created_by_id: 'user-admin',
       created_by_name: 'Shop Admin',

@@ -1,4 +1,4 @@
--- Papers & Petals — seed products + starting stock (run after schema_flowers_v2.sql)
+-- Flowershop — seed products + starting stock (run after schema_flowers_v2.sql)
 -- Safe to re-run: uses ON CONFLICT upserts.
 
 insert into public.flower_products (id, name, color, unit_cost, is_active) values
